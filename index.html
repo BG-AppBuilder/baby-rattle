@@ -99,18 +99,55 @@ function initAudio(){
     } catch(e){}
   });
 }
+var keepAlive = null, resumeFails = 0;
+function startKeepAlive(){
+  // A silent loop keeps iOS from closing the audio session during quiet stretches.
+  if (!AC) return;
+  try { if (keepAlive) keepAlive.stop(0); } catch(e){}
+  try {
+    var b = AC.createBuffer(1, AC.sampleRate, AC.sampleRate); // one second of silence
+    var s = AC.createBufferSource(); s.buffer = b; s.loop = true;
+    var g = AC.createGain(); g.gain.value = 0.0001;
+    s.connect(g); g.connect(AC.destination); s.start(0); keepAlive = s;
+  } catch(e){}
+}
+function rebuildAudio(){
+  // iOS sometimes leaves a context permanently "interrupted"; build a fresh one and copy the sounds across.
+  var old = AC, oldBuf = BUF;
+  try { if (old) old.close(); } catch(e){}
+  AC = null; BUF = {}; audioReady = false; resumeFails = 0; lastPlay = {};
+  initAudio();
+  if (!AC) return;
+  Object.keys(oldBuf).forEach(function(n){
+    try {
+      var ob = oldBuf[n]; var nb = AC.createBuffer(ob.numberOfChannels, ob.length, ob.sampleRate);
+      for (var c=0;c<ob.numberOfChannels;c++) nb.copyToChannel(ob.getChannelData(c), c);
+      BUF[n] = nb;
+    } catch(e){}
+  });
+}
+function ensureAudio(fromGesture){
+  if (!AC) return;
+  if (AC.state === 'running'){ resumeFails = 0; return; }
+  if (fromGesture) resumeFails++;
+  if (fromGesture && resumeFails >= 3){ rebuildAudio(); unlockAudio(); return; }
+  try { var p = AC.resume(); if (p && p.catch) p.catch(function(){}); } catch(e){}
+}
 function unlockAudio(){
   initAudio();
   if (!AC) return;
-  if (AC.state === 'suspended') AC.resume();
+  if (AC.state !== 'running') ensureAudio(true);
   if (!audioReady){
     try { var b = AC.createBuffer(1, 1, 22050); var s = AC.createBufferSource(); s.buffer = b; s.connect(AC.destination); s.start(0); } catch(e){}
     audioReady = true;
+    startKeepAlive();
   }
 }
+setInterval(function(){ ensureAudio(false); }, 2000);
 var lastPlay = {};
 function play(name, gain, minGap){
   if (!AC || !BUF[name]) return;
+  if (AC.state !== 'running') ensureAudio(false);
   var now = AC.currentTime;
   if (minGap && lastPlay[name] && now - lastPlay[name] < minGap) return;
   lastPlay[name] = now;
@@ -276,7 +313,7 @@ function drawParticles(){
 
 /* ---------- the star ---------- */
 var star = {x:0, y:0, dir:0, speed:0, boostT:-99, tgt:null, tgtUntil:-99};
-window.__rattle = star; window.__buf = function(){ return Object.keys(BUF); }; window.__melody = function(){ return melodyIdx; };
+window.__rattle = star; window.__buf = function(){ return Object.keys(BUF); }; window.__melody = function(){ return melodyIdx; }; window.__rebuild = function(){ rebuildAudio(); unlockAudio(); return AC && AC.state; };
 function starRadius(){ return STAR_DIAM * U / 2; }
 function speedPx(){ return star.speed * S; }
 function resetStar(){
@@ -426,8 +463,10 @@ function frame(ts){
   requestAnimationFrame(frame);
 }
 document.addEventListener('visibilitychange', function(){
-  if (document.hidden){ running = false; } else if (!running){ running = true; lastTs = 0; requestAnimationFrame(frame); }
+  if (document.hidden){ running = false; } else { ensureAudio(false); if (!running){ running = true; lastTs = 0; requestAnimationFrame(frame); } }
 });
+window.addEventListener('pageshow', function(){ ensureAudio(false); });
+window.addEventListener('focus', function(){ ensureAudio(false); });
 
 function start(){
   sparkleImg = makeSparkle(); miniStarImg = makeMiniStar();
