@@ -16,11 +16,11 @@
 <body>
 <style>
 /* Single-screen toy: one full-bleed canvas, no UI. Committed single look (the colored toy itself is the theme). */
-:root{--bg:#0b7a0b;--fg:#ffffff;color-scheme:dark}
+:root{--bg:#000000;--fg:#ffffff;color-scheme:dark}
 html,body{height:100%;margin:0;padding:0;overflow:hidden;background:var(--bg);color:var(--fg)}
-body{position:fixed;inset:0;touch-action:none;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none;-webkit-tap-highlight-color:transparent;overscroll-behavior:none}
-#c{position:absolute;inset:0;width:100%;height:100%;display:block;touch-action:none}
-#load{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font:600 18px/1.3 -apple-system,system-ui,sans-serif;color:#fff;background:#0b7a0b;opacity:.9}
+body{position:fixed;top:0;left:0;right:0;bottom:0;touch-action:none;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none;-webkit-tap-highlight-color:transparent;overscroll-behavior:none}
+#c{position:fixed;top:0;left:0;width:100%;height:100%;display:block;touch-action:none}
+#load{position:fixed;top:0;left:0;right:0;bottom:0;display:flex;align-items:center;justify-content:center;font:600 18px/1.3 -apple-system,system-ui,sans-serif;color:#fff;background:#0b7a0b;opacity:.9}
 #load[hidden]{display:none!important}
 </style>
 <canvas id="c" aria-label="Baby Rattle"></canvas>
@@ -36,23 +36,35 @@ var ACTIVE_SPEED  = 3.0;       // right after the star is tapped
 var ACTIVE_TAU    = 4.3;       // seconds; speed decays toward dormant
 var EYES_OPEN_SPEED = 0.42;    // eyes open while faster than this
 var BG_SCROLL     = 0.134;     // background drift, fraction of short side per second
-var STAR_DIAM     = 0.30;      // star diameter (petal tip to tip) / short side
+var STAR_DIAM     = 0.30;      // star diameter (petal tip to tip) / unit
+var UNIT_CAP      = 420;       // sizes stop growing once the short side passes this many points (phone size)
 var ANIMAL_SIZE   = 0.33;
 var ANIMAL_LIFE   = 2.5, ANIMAL_FADE_AT = 1.6, ANIMAL_POP = 0.25;
 var BG_FADE       = 2.6;       // seconds for a background crossfade
 
 var canvas = document.getElementById('c');
 var ctx = canvas.getContext('2d', {alpha:false});
-var W = 0, H = 0, S = 0, DPR = 1;
+var W = 0, H = 0, S = 0, U = 0, DPR = 1;
+function measure(){
+  var vv = window.visualViewport;
+  var w = Math.max(window.innerWidth || 0, document.documentElement.clientWidth || 0, vv ? vv.width : 0);
+  var h = Math.max(window.innerHeight || 0, document.documentElement.clientHeight || 0, vv ? vv.height : 0);
+  return {w: Math.round(w), h: Math.round(h)};
+}
 function resize(){
+  var m = measure(); if (!m.w || !m.h) return;
   DPR = Math.min(window.devicePixelRatio || 1, 2);
-  W = canvas.clientWidth || window.innerWidth; H = canvas.clientHeight || window.innerHeight;
+  W = m.w; H = m.h;
+  canvas.style.width = W + 'px'; canvas.style.height = H + 'px';
   canvas.width = Math.round(W * DPR); canvas.height = Math.round(H * DPR);
-  S = Math.min(W, H);
+  S = Math.min(W, H);           // short side: drives speeds, so the star crosses the screen in the same time everywhere
+  U = Math.min(S, UNIT_CAP);    // unit: drives sizes, so the star stays phone-sized on a tablet
   rebuildBackgrounds();
 }
+function checkSize(){ var m = measure(); if (m.w !== W || m.h !== H) resize(); }
 window.addEventListener('resize', resize);
-window.addEventListener('orientationchange', function(){ setTimeout(resize, 300); });
+window.addEventListener('orientationchange', function(){ setTimeout(resize, 300); setTimeout(resize, 900); });
+if (window.visualViewport) window.visualViewport.addEventListener('resize', resize);
 
 /* ---------- images ---------- */
 var IMG = {};
@@ -149,7 +161,7 @@ var lastBgChange = -99, nextAutoBg = 9;
 function makeBg(patternName, color){
   var im = IMG[patternName];
   if (!im || !im.width) return null;
-  var scale = S / 1080 * 2;           // tiles are half-res of a 1080-wide phone screen
+  var scale = U / 1080 * 2;           // tiles are half-res of a 1080-wide phone screen
   var tw = Math.max(2, Math.round(im.width * scale * DPR)), th = Math.max(2, Math.round(im.height * scale * DPR));
   var off = document.createElement('canvas'); off.width = tw; off.height = th;
   var o = off.getContext('2d');
@@ -265,7 +277,7 @@ function drawParticles(){
 /* ---------- the star ---------- */
 var star = {x:0, y:0, dir:0, speed:0, boostT:-99, tgt:null, tgtUntil:-99};
 window.__rattle = star; window.__buf = function(){ return Object.keys(BUF); }; window.__melody = function(){ return melodyIdx; };
-function starRadius(){ return STAR_DIAM * S / 2; }
+function starRadius(){ return STAR_DIAM * U / 2; }
 function speedPx(){ return star.speed * S; }
 function resetStar(){
   star.x = W*0.65; star.y = H*0.3; star.dir = Math.PI*0.85; star.speed = DORMANT_SPEED;
@@ -275,8 +287,8 @@ function tapStar(t){
   // the cheer clip already carries the song's "little star, how I wonder" notes, so the bounces pick up from there
   play('cheer', 1.0, 0.35); melodyMuteUntil = t + 2.7; melodyIdx = 9;
   var r = starRadius();
-  for (var i=0;i<28;i++) spawnParticle(1, star.x, star.y, r*0.8, S*0.25, 3.5, S*0.07);
-  for (var j=0;j<14;j++) spawnParticle(0, star.x, star.y, r*0.9, S*0.1, 1.6, S*0.11);
+  for (var i=0;i<28;i++) spawnParticle(1, star.x, star.y, r*0.8, U*0.25, 3.5, U*0.07);
+  for (var j=0;j<14;j++) spawnParticle(0, star.x, star.y, r*0.9, U*0.1, 1.6, U*0.11);
   changeBackground(t);
 }
 function tapElsewhere(x, y, t){
@@ -296,7 +308,7 @@ function updateStar(dt){
     var d = Math.atan2(Math.sin(want - star.dir), Math.cos(want - star.dir));
     var rate = (active ? 2.2 : 1.6) * dt; // radians per second
     if (Math.abs(d) < rate) star.dir = want; else star.dir += Math.sign(d)*rate;
-    if (Math.hypot(star.tgt.x - star.x, star.tgt.y - star.y) < S*0.05) star.tgt = null;
+    if (Math.hypot(star.tgt.x - star.x, star.tgt.y - star.y) < U*0.05) star.tgt = null;
   } else {
     // gentle random wander
     star.dir += (Math.random()-0.5) * 0.35 * dt;
@@ -329,13 +341,13 @@ function updateStar(dt){
   var sparkRate = 22 + 70*intensity, starRate = 4 + 45*intensity;
   emitAcc.s += sparkRate*dt; emitAcc.m += starRate*dt;
   var rr = starRadius();
-  while (emitAcc.s >= 1){ emitAcc.s--; spawnParticle(0, star.x, star.y, rr*0.8, S*0.02, 1.7 + intensity*0.8, S*(0.13 + 0.04*intensity)); }
-  while (emitAcc.m >= 1){ emitAcc.m--; spawnParticle(1, star.x, star.y, rr*0.9, S*(0.03 + 0.12*intensity), 2.8 + intensity*1.5, S*0.065); }
+  while (emitAcc.s >= 1){ emitAcc.s--; spawnParticle(0, star.x, star.y, rr*0.8, U*0.02, 1.7 + intensity*0.8, U*(0.13 + 0.04*intensity)); }
+  while (emitAcc.m >= 1){ emitAcc.m--; spawnParticle(1, star.x, star.y, rr*0.9, U*(0.03 + 0.12*intensity), 2.8 + intensity*1.5, U*0.065); }
 }
 function drawStar(){
   var active = star.speed > EYES_OPEN_SPEED;
   var im = active ? IMG.star_open : IMG.star_closed;
-  var size = STAR_DIAM * S * (350/320);
+  var size = STAR_DIAM * U * (350/320);
   // rocking: slow and gentle when sleeping, quicker when awake
   var a = active ? 0.5*Math.sin(T*5.7) : 0.3*Math.sin(T*1.9);
   ctx.save();
@@ -350,11 +362,11 @@ var animals = []; var lastAnimal = -1;
 function spawnAnimal(x, y, t){
   var i; do { i = Math.floor(Math.random()*ANIMALS.length); } while (i === lastAnimal && ANIMALS.length > 1);
   lastAnimal = i;
-  var size = ANIMAL_SIZE * S;
+  var size = ANIMAL_SIZE * U;
   var ax = Math.min(Math.max(x, size*0.4), W - size*0.4), ay = Math.min(Math.max(y, size*0.4), H - size*0.4);
   animals.push({name:ANIMALS[i], x:ax, y:ay, born:t, rot:(Math.random()-0.5)*1.2, ph:Math.random()*6});
   play(ANIMALS[i], 1.0);
-  for (var k=0;k<6;k++) spawnParticle(0, ax, ay, size*0.4, S*0.03, 1.2, S*0.08);
+  for (var k=0;k<6;k++) spawnParticle(0, ax, ay, size*0.4, U*0.03, 1.2, U*0.08);
 }
 function drawAnimals(){
   var keep = [];
@@ -366,7 +378,7 @@ function drawAnimals(){
     // pop in with a little overshoot (ease-out-back)
     if (age < ANIMAL_POP){ var u = age/ANIMAL_POP; var c1 = 1.70158, c3 = c1 + 1; sc = 1 + c3*Math.pow(u-1,3) + c1*Math.pow(u-1,2); }
     var alpha = age < ANIMAL_FADE_AT ? 1 : Math.max(0, 1 - (age - ANIMAL_FADE_AT)/(ANIMAL_LIFE - ANIMAL_FADE_AT));
-    var size = ANIMAL_SIZE * S * sc;
+    var size = ANIMAL_SIZE * U * sc;
     var rock = 0.12*Math.sin(an.ph + age*7.5) * (age < ANIMAL_FADE_AT ? 1 : 0.5);
     ctx.save();
     ctx.globalAlpha = alpha;
@@ -378,7 +390,7 @@ function drawAnimals(){
 }
 
 /* ---------- input ---------- */
-function hitStar(x, y){ return Math.hypot(x - star.x, y - star.y) < starRadius()*0.95; }
+function hitStar(x, y){ return Math.hypot(x - star.x, y - star.y) < starRadius()*1.05; }
 function pointerDown(x, y){
   unlockAudio();
   if (hitStar(x, y)) tapStar(T); else tapElsewhere(x, y, T);
@@ -402,6 +414,7 @@ var T = 0, lastTs = 0, running = false;
 function frame(ts){
   if (!running) return;
   var dt = lastTs ? Math.min(0.05, (ts - lastTs)/1000) : 1/60; lastTs = ts; T += dt;
+  checkSize();
   if (T > nextAutoBg) changeBackground(T);
   if (bgB){ bgMix = Math.min(1, bgMix + dt/BG_FADE); if (bgMix >= 1){ bgA = bgB; bgB = null; bgMix = 0; } }
   updateStar(dt); updateParticles(dt);
